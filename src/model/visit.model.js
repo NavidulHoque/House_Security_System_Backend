@@ -1,6 +1,12 @@
 import mongoose, { Schema } from "mongoose";
 
 const visitSchema = new Schema({
+    visitId: {
+        type: String,
+        unique: true,
+        trim: true,
+        immutable: true,
+    },
     client: {
         type: Schema.Types.ObjectId,
         ref: 'User',
@@ -45,6 +51,10 @@ const visitSchema = new Schema({
             type: String,
             trim: true
         },
+        issueDate: {
+            type: Date,
+            default: Date.now
+        },
         type: {
             type: String,
         },
@@ -77,5 +87,37 @@ const visitSchema = new Schema({
     }
 
 }, { timestamps: true })
+
+// Pre-save hook to generate visitId only for new documents
+visitSchema.pre('save', async function(next) {
+    if (this.isNew && !this.visitId) {
+        let isUnique = false;
+        let generatedId;
+        
+        while (!isUnique) {
+            // Generate 3-digit random number (100-999)
+            generatedId = Math.floor(100 + Math.random() * 900).toString();
+            
+            // Check for existing visit with this ID
+            const existingVisit = await this.constructor.findOne({ visitId: generatedId });
+            if (!existingVisit) {
+                isUnique = true;
+            }
+        }
+        
+        this.visitId = generatedId;
+    }
+    next();
+});
+
+visitSchema.pre(['updateOne', 'findOneAndUpdate'], async function(next) {
+    const update = this.getUpdate();
+    
+    if (update.visitId) {
+        delete update.visitId;
+        delete update.$set?.visitId;
+    }
+    next();
+});
 
 export const Visit = mongoose.model("Visit", visitSchema);

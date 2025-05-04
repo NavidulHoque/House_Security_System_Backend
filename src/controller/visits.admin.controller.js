@@ -37,6 +37,7 @@ export const createVisit = async (req, res, next) => {
             status: "confirmed", // Ensure status is included
             isPaid: true,
         };
+        console.log("first", visitData)
 
         // Call the service
         const response = await createVisitService(visitData, client._id);
@@ -296,19 +297,39 @@ export const getUpcomingVisits = async (req, res, next) => {
 //     }
 // }
 
-//admin updates a specific visit for a client
 export const updateVisit = async (req, res, next) => {
     const { id } = req.params;
     const { staff, type, notes } = req.body;
 
     try {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                status: false,
+                message: "Invalid visit ID"
+            });
+        }
 
-    
-        const updatedVisit = await updateVisitService(
-            { staff, type, notes, status: "confirmed" },
-            id
-        );
-    
+        const updatedVisit = await Visit.findByIdAndUpdate(
+            id,
+            { 
+                staff, 
+                type, 
+                notes, 
+                status: "confirmed" 
+            },
+            { 
+                new: true, 
+                runValidators: true 
+            }
+        ).populate('client', 'email').populate('staff', 'email');
+
+        if (!updatedVisit) {
+            return res.status(404).json({
+                status: false,
+                message: "Visit not found"
+            });
+        }
+
         const formattedDate = new Date(updatedVisit.date).toLocaleString("en-US", {
             weekday: "short",
             year: "numeric",
@@ -318,14 +339,14 @@ export const updateVisit = async (req, res, next) => {
             minute: "2-digit",
             hour12: true,
         });
-    
+
         // Notify users
         await Notification.create({
             userId: updatedVisit.client._id,
             type: "visit update",
             message: `Visit log updated for ${updatedVisit.visitCode} (${formattedDate})`,
         });
-    
+
         if (updatedVisit.staff) {
             await Notification.create({
                 userId: updatedVisit.staff._id,
@@ -333,25 +354,39 @@ export const updateVisit = async (req, res, next) => {
                 message: `Visit log updated for ${updatedVisit.visitCode} (${formattedDate})`,
             });
         }
-    
+
         return res.status(200).json({
             status: true,
             message: "Visit updated successfully",
             data: updatedVisit,
         });
     } catch (error) {
-        return res.status(400).json({
-            status: false,
-            message: error.message || "Something went wrong",
-        });
+        next(error);
     }
 }
 export const updateVisitStaff = async (req, res, next) => {
-    const { id } = req.params
-    const { staff } = req.body
+    const { id } = req.params;
+    const { staff } = req.body;
 
     try {
-        const visit = mongoose.Types.ObjectId.isValid(id) && await Visit.findByIdAndUpdate(id, { staff, status: "confirmed" }, { new: true }).lean()
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                status: false,
+                message: "Invalid visit ID"
+            });
+        }
+
+        const visit = await Visit.findByIdAndUpdate(
+            id,
+            { 
+                staff, 
+                status: "confirmed" 
+            },
+            { 
+                new: true, 
+                runValidators: true 
+            }
+        ).lean();
 
         if (!visit) {
             return res.status(404).json({
@@ -362,15 +397,13 @@ export const updateVisitStaff = async (req, res, next) => {
 
         return res.status(200).json({
             status: true,
-            message: "Visit staff updated successfully"
-        })
-    }
-
-    catch (error) {
-        next(error)
+            message: "Visit staff updated successfully",
+            data: visit
+        });
+    } catch (error) {
+        next(error);
     }
 }
-
 export const getSpecificVisit = async (req, res, next) => {
     const { id } = req.params   
     
@@ -395,3 +428,44 @@ export const getSpecificVisit = async (req, res, next) => {
         next(error)
     }
 }
+
+export const getEmails = async (req, res, next) => {
+    try {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const skip = (page - 1) * limit;
+  
+      const visits = await Visit.find({
+        status: { $in: ["confirmed", "pending"] }
+      })
+        .populate({
+          path: "client",
+          select: "email" 
+        }).select("-staff -address -date -type -notes -issues -cancellationReason -createdAt -updatedAt -status -isPaid -__v")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+  
+      // Count total matching visits for pagination
+      const total = await Visit.countDocuments({
+        status: { $in: ["confirmed", "pending"] }
+      });
+  
+      // Calculate total pages
+      const totalPages = Math.ceil(total / limit);
+  
+      return res.status(200).json({
+        success: true,
+        data: visits,
+        meta: {
+          currentPage: page,
+          totalPages,
+          totalItems: total,
+          itemsPerPage: limit
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  };

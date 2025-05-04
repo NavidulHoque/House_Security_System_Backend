@@ -3,7 +3,7 @@ import { Visit } from "../model/visit.model.js"
 import { cloudinaryUploadImage, cloudinaryUploadVideo } from "../utils/cloudinary.utils.js";
 
 export const addIssue = async (req, res, next) => {
-    const { email, place, issue, type, notes } = req.body;
+    const { email, place, issue, type, notes, issueDate } = req.body;
 
     try {
         // Find the user by email to get their ID
@@ -16,7 +16,7 @@ export const addIssue = async (req, res, next) => {
         }
 
         // Find the existing visit by client ID
-        const existingVisit = await Visit.findOne({ client: user._id }).lean();
+        const existingVisit = await Visit.findOne({ client: user._id });
         if (!existingVisit) {
             return res.status(404).json({
                 status: false,
@@ -36,15 +36,13 @@ export const addIssue = async (req, res, next) => {
                 : null
         ]);
 
-        const imageUrl = cloudinaryImage?.secure_url;
-        const videoUrl = cloudinaryVideo?.secure_url;
-
         const media = [];
-        if (imageUrl) media.push({ type: "photo", url: imageUrl });
-        if (videoUrl) media.push({ type: "video", url: videoUrl });
+        if (cloudinaryImage?.secure_url) media.push({ type: "photo", url: cloudinaryImage.secure_url });
+        if (cloudinaryVideo?.secure_url) media.push({ type: "video", url: cloudinaryVideo.secure_url });
 
-        // Create a new Visit document, copying fields from the existing visit
+        // Create a new Visit document with the SAME visitId
         const newVisit = await Visit.create({
+            visitId: existingVisit.visitId, // Keep the same visitId
             client: existingVisit.client,
             staff: existingVisit.staff || null,
             address: existingVisit.address,
@@ -56,11 +54,14 @@ export const addIssue = async (req, res, next) => {
             issues: [{
                 place,
                 issue,
+                issueDate: issueDate || new Date(),
                 type: type || "warning",
                 media,
                 notes
             }],
             isPaid: existingVisit.isPaid || false,
+            plan: existingVisit.plan,
+            addsOnService: existingVisit.addsOnService
         });
 
         // Populate client and staff fields
@@ -78,7 +79,6 @@ export const addIssue = async (req, res, next) => {
         next(error);
     }
 };
-
 // Get issue by visit ID
 export const getAllIssues = async (req, res, next) => {
     const { visitId } = req.params;
