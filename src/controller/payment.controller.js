@@ -18,24 +18,25 @@ export const createPaymentIntent = async (req, res, next) => {
 
     const amountInCents = Math.round(amount * 100)
 
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: 'Plan Purchase',
-            },
-            unit_amount: amountInCents,
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    mode: 'payment',
+    line_items: [
+      {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: 'Plan Purchase',
           },
-          quantity: 1,
+          unit_amount: amountInCents,
         },
-      ],
-      success_url: `${process.env.FRONTEND_URL}/payment/success`,
-      cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
-    })
+        quantity: 1,
+      },
+    ],
+    success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.FRONTEND_URL}/cancel?session_id={CHECKOUT_SESSION_ID}`,
+  })
+
 
     // Create pending payment record
     await Payment.create({
@@ -78,9 +79,13 @@ export const checkPaymentStatus = async (req, res, next) => {
       paymentStatus = 'completed'
     }
 
+    // Get the real transaction ID from session
+    const paymentIntentId = session.payment_intent
+
     const payment = await Payment.findOneAndUpdate(
       { transactionId: sessionId },
       {
+        transactionId: paymentIntentId, 
         status: paymentStatus,
         paymentDate: paymentStatus === 'completed' ? Date.now() : undefined,
       },
@@ -103,6 +108,7 @@ export const checkPaymentStatus = async (req, res, next) => {
     next(error)
   }
 }
+
 
 export const getAllPayments = async (req, res, next) => {
   try {
@@ -147,18 +153,33 @@ export const getAllPayments = async (req, res, next) => {
 export const userAllPayment = async (req, res, next) => {
   try {
     const { userId } = req.params
+    const { page = 1, limit = 10 } = req.query
+
     if (!userId) {
       return res
         .status(400)
         .json({ status: false, message: 'User id is required.' })
     }
 
-    const payments = await Payment.find({ user: userId }).populate({ path: 'user', select: 'fullname' }).populate({ path: "plan", select: "name price pack status" }).sort({ createdAt: -1 })
+    const payments = await Payment.find({ user: userId })
+      .populate({ path: 'user', select: 'fullname' })
+      .populate({ path: 'plan', select: 'name price pack status' })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit))
+
+    const total = await Payment.countDocuments({ user: userId })
 
     return res.status(200).json({
       status: true,
       message: 'User payments fetched successfully',
       data: payments,
+      pagination: {
+        currentPage: Number(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        itemsPerPage: Number(limit),
+      },
     })
   } catch (error) {
     next(error)
